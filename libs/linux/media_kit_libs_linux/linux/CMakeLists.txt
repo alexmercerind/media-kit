@@ -9,115 +9,75 @@ cmake_minimum_required(VERSION 3.13)
 # This option is read by the other packages which are part of package:media_kit.
 option(MEDIA_KIT_LIBS_AVAILABLE "package:media_kit libraries are available." ON)
 
-# This is the public option enabling dynamic linking on request of applications.
-option(MIMALLOC_USE_STATIC_LIBS "Whether to prefer linking to mimalloc statically" ON)
+# ------------------------------------------------------------------------------
 
-set(PROJECT_NAME "media_kit_libs_linux")
-project(${PROJECT_NAME} LANGUAGES CXX)
+function(download_and_verify_sha256 url sha256 locationForArchive)
+  # Check if the archive exists.
+  if(EXISTS "${locationForArchive}")
+    file(SHA256 "${locationForArchive}" ARCHIVE_SHA256)
 
-if(MIMALLOC_USE_STATIC_LIBS)
-
-  # We use the mimalloc's object file (mimalloc.o) & link the final executable with it.
-  # This ensures that the standard malloc interface resolves to the mimalloc library.
-  #
-  # Refer to "Static Override" section in mimalloc's documentation:
-  # https://github.com/microsoft/mimalloc#static-override
-  function(download_and_verify url md5 locationForArchive)
-    # Check if the archive exists.
-    if(EXISTS "${locationForArchive}")
-      file(MD5 "${locationForArchive}" ARCHIVE_MD5)
-
-      # If MD5 doesn't match, delete the archive to download again.
-      if(NOT md5 STREQUAL ARCHIVE_MD5)
-        file(REMOVE "${locationForArchive}")
-        message(STATUS "MD5 mismatch. File deleted.")
-      endif()
+    # If SHA-256 doesn't match, delete the archive to download again.
+    if(NOT sha256 STREQUAL ARCHIVE_SHA256)
+      file(REMOVE "${locationForArchive}")
+      message(STATUS "SHA-256 mismatch. File deleted.")
     endif()
+  endif()
 
-    # Download the archive if it doesn't exist.
-    if(NOT EXISTS "${locationForArchive}")
-      message(STATUS "Downloading archive from ${url}...")
-      file(DOWNLOAD "${url}" "${locationForArchive}")
-      message(STATUS "Downloaded archive to ${locationForArchive}.")
+  # Download the archive if it doesn't exist.
+  if(NOT EXISTS "${locationForArchive}")
+    message(STATUS "Downloading archive from ${url}...")
+    file(DOWNLOAD "${url}" "${locationForArchive}")
+    message(STATUS "Downloaded archive to ${locationForArchive}.")
 
-      # Verify MD5 of the newly downloaded file.
-      file(MD5 "${locationForArchive}" ARCHIVE_MD5)
+    # Verify SHA-256 of the newly downloaded file.
+    file(SHA256 "${locationForArchive}" ARCHIVE_SHA256)
 
-      if(md5 STREQUAL ARCHIVE_MD5)
-        message(STATUS "${locationForArchive} Verification successful.")
-      else()
-        message(FATAL_ERROR "${locationForArchive} Integrity check failed, please try to rebuild project again.")
-      endif()
-    endif()
-  endfunction()
-
-  # ------------------------------------------------------------------------------
-  set(MIMALLOC "mimalloc-2.1.2.tar.gz")
-
-  set(MIMALLOC_URL "https://github.com/microsoft/mimalloc/archive/refs/tags/v2.1.2.tar.gz")
-  set(MIMALLOC_MD5 "5179c8f5cf1237d2300e2d8559a7bc55")
-
-  set(MIMALLOC_ARCHIVE "${CMAKE_BINARY_DIR}/${MIMALLOC}")
-  set(MIMALLOC_SRC "${CMAKE_BINARY_DIR}/mimalloc")
-
-  download_and_verify(
-    ${MIMALLOC_URL}
-    ${MIMALLOC_MD5}
-    ${MIMALLOC_ARCHIVE}
-  )
-
-  function(check_directory_exists_and_not_empty dir result_var)
-    # Check if the directory exists
-    if(EXISTS "${dir}")
-      # Check if the directory is not empty
-      file(GLOB dir_contents "${dir}/*")
-
-      if(dir_contents)
-        set(${result_var} TRUE PARENT_SCOPE)
-      else()
-        set(${result_var} FALSE PARENT_SCOPE)
-        message(STATUS "Directory ${dir} exists but is empty!")
-      endif()
+    if(sha256 STREQUAL ARCHIVE_SHA256)
+      message(STATUS "${locationForArchive} Verification successful.")
     else()
-      set(${result_var} FALSE PARENT_SCOPE)
-      message(STATUS "Directory ${dir} does not exist!")
+      message(FATAL_ERROR "${locationForArchive} Integrity check failed, please try to rebuild project again.")
     endif()
-  endfunction()
-
-  # Extract
-  # https://stackoverflow.com/a/19859882/12825435
-  set(MIMALLOC_LIB "${MIMALLOC_SRC}/out/release/mimalloc.o" CACHE INTERNAL "")
-
-  check_directory_exists_and_not_empty(${MIMALLOC_SRC} MIMALLOC_VALID)
-
-  if(NOT MIMALLOC_VALID)
-    message(STATUS "Extracting ${MIMALLOC}...")
-    make_directory("${MIMALLOC_SRC}")
-    add_custom_command(
-      OUTPUT ${MIMALLOC_LIB}
-      COMMAND "${CMAKE_COMMAND}" -E tar xzf "${MIMALLOC_ARCHIVE}"
-
-      # add_subdirectory() is too much work. Alternatively building it through command line.
-      COMMAND "mkdir" "-p" "out/release"
-      COMMAND "cd" "out/release"
-      COMMAND "${CMAKE_COMMAND}" "../../mimalloc-2.1.2"
-      COMMAND "make"
-      WORKING_DIRECTORY "${MIMALLOC_SRC}"
-    )
   endif()
+endfunction()
 
-  add_custom_target("MIMALLOC_TARGET" ALL DEPENDS ${MIMALLOC_LIB})
+set(LIBMPV_VERSION "v0.0.5")
 
+if(${FLUTTER_TARGET_PLATFORM} STREQUAL "linux-arm64")
+  set(LIBMPV "libmpv_linux_aarch64_audio.zip")
+  set(LIBMPV_SHA256 "88061168ec3cab52147f5bfbc077bd57a56e2a91a40563246f388a3f71588608")
+elseif(${FLUTTER_TARGET_PLATFORM} STREQUAL "linux-x64")
+  set(LIBMPV "libmpv_linux_x86_64_audio.zip")
+  set(LIBMPV_SHA256 "a9eb8e7c19f37a9fce477a232e6ecbcb0888ecb4658003ceb334f3f17ae97d00")
 else()
-
-  find_library(MIMALLOC_PATH "libmimalloc.so")
-  if(MIMALLOC_PATH)
-    set(MIMALLOC_LIB "${MIMALLOC_PATH}" CACHE INTERNAL "")
-  endif()
-
+  message(FATAL_ERROR "Unsupported FLUTTER_TARGET_PLATFORM for prebuilt libmpv: ${FLUTTER_TARGET_PLATFORM}")
 endif()
 
-unset(MIMALLOC_USE_STATIC_LIBS CACHE)
+# Download URL for the libmpv archive.
+set(LIBMPV_URL "https://github.com/alexmercerind/libmpv-build/releases/download/${LIBMPV_VERSION}/${LIBMPV}")
+
+# Download location of the libmpv archive.
+set(LIBMPV_ARCHIVE "${CMAKE_BINARY_DIR}/${LIBMPV_VERSION}_${LIBMPV}")
+set(LIBMPV_SRC "${CMAKE_BINARY_DIR}/libmpv")
+
+download_and_verify_sha256(
+  ${LIBMPV_URL}
+  ${LIBMPV_SHA256}
+  ${LIBMPV_ARCHIVE}
+)
+
+# Extract the libmpv archive.
+if(NOT EXISTS "${LIBMPV_SRC}/lib/libmpv.so")
+  message(STATUS "Extracting ${LIBMPV}...")
+  file(MAKE_DIRECTORY "${LIBMPV_SRC}")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E tar xf "${LIBMPV_ARCHIVE}"
+    WORKING_DIRECTORY "${LIBMPV_SRC}"
+    RESULT_VARIABLE LIBMPV_EXTRACT_RESULT
+  )
+  if(NOT LIBMPV_EXTRACT_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to extract ${LIBMPV_ARCHIVE}.")
+  endif()
+endif()
 
 # ------------------------------------------------------------------------------
 set(PLUGIN_NAME "media_kit_libs_linux_plugin")
@@ -140,6 +100,6 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE flutter)
 
 set(
   media_kit_libs_linux_bundled_libraries
-  ""
+  "${LIBMPV_SRC}/lib/libmpv.so.2.6.0"
   PARENT_SCOPE
 )

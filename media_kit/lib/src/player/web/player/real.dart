@@ -114,6 +114,9 @@ class WebPlayer extends PlatformPlayer {
       });
       element.onTimeUpdate.listen((_) {
         lock.synchronized(() async {
+          // PlayerState.state.subtitle & PlayerState.stream.subtitle
+          _syncSubtitlesFromActiveCues();
+
           // PlayerState.state.position & PlayerState.stream.position
           Duration? position = convertNumVideoDurationToPluginDuration(
             element.currentTime,
@@ -306,25 +309,7 @@ class WebPlayer extends PlatformPlayer {
       await pause(synchronized: false);
 
       state = state.copyWith(
-        track: state.track.copyWith(
-          video: VideoTrack.no(),
-        ),
-      );
-      if (!trackController.isClosed) {
-        trackController.add(state.track);
-      }
-      state = state.copyWith(
-        track: state.track.copyWith(
-          audio: AudioTrack.no(),
-        ),
-      );
-      if (!trackController.isClosed) {
-        trackController.add(state.track);
-      }
-      state = state.copyWith(
-        track: state.track.copyWith(
-          subtitle: SubtitleTrack.no(),
-        ),
+        track: const Track(),
       );
       if (!trackController.isClosed) {
         trackController.add(state.track);
@@ -335,6 +320,7 @@ class WebPlayer extends PlatformPlayer {
         web.URL.revokeObjectURL(_subtitleBlobUrl!);
         _subtitleBlobUrl = null;
       }
+      _subtitleTrackElement = null;
 
       disposed = true;
 
@@ -1337,7 +1323,8 @@ class WebPlayer extends PlatformPlayer {
       }
 
       if (['no', 'auto'].contains(track.id)) {
-        // No action needed for these tracks.
+        _subtitleTrackElement?.remove();
+        _subtitleTrackElement = null;
       } else if (track.uri || track.data) {
         final String uri;
         if (track.uri) {
@@ -1348,7 +1335,10 @@ class WebPlayer extends PlatformPlayer {
             _subtitleBlobUrl = null;
           }
           final bytes = Uint8List.fromList(utf8.encode(track.id));
-          final blob = web.Blob(<JSUint8Array>[bytes.toJS].toJS);
+          final blob = web.Blob(
+            <JSUint8Array>[bytes.toJS].toJS,
+            web.BlobPropertyBag(type: 'text/vtt'),
+          );
           final src = web.URL.createObjectURL(blob);
           _subtitleBlobUrl = src;
           uri = src;
@@ -1372,55 +1362,14 @@ class WebPlayer extends PlatformPlayer {
           subtitleController.add(['', '']);
         }
 
-        // Set up the cue change handler function
-        void handleCueChange(web.Event event) {
-          try {
-            final textTrack = child.track;
-            final activeCues = textTrack.activeCues;
-            if (activeCues != null) {
-              final cueList = <String>[];
-              for (var i = 0; i < activeCues.length; i++) {
-                final cue = activeCues[i];
-                // VTTCue has a 'text' property
-                final text = (cue as dynamic).text as String?;
-                if (text != null) {
-                  cueList.add(
-                    text
-                        .replaceAll(RegExp('<[^>]*>'), ' ')
-                        .replaceAll(RegExp(r'\s+'), ' ')
-                        .trim(),
-                  );
-                }
-              }
-
-              final subtitle = ['', ''];
-              if (cueList.length == 1) {
-                subtitle[0] = cueList[0];
-              } else if (cueList.length >= 2) {
-                subtitle[0] = cueList[0];
-                subtitle[1] = cueList.skip(1).join('\n');
-              }
-
-              state = state.copyWith(subtitle: subtitle);
-              if (!subtitleController.isClosed) {
-                subtitleController.add(subtitle);
-              }
-            }
-          } catch (exception, stacktrace) {
-            print(exception);
-            print(stacktrace);
-          }
-        }
-
         child.onLoad.listen((_) {
-          final textTrack = child.track;
-          textTrack.mode = 'hidden';
-          textTrack.oncuechange = handleCueChange.toJS;
+          child.track.mode = 'hidden';
         });
 
         element.appendChild(child);
         child.src = uri;
         child.track.mode = 'hidden';
+        _subtitleTrackElement = child;
       } else {
         throw UnsupportedError(
           '[Player.setSubtitleTrack] is only supported with [SubtitleTrack.uri] & [SubtitleTrack.data] on web',
@@ -1432,6 +1381,51 @@ class WebPlayer extends PlatformPlayer {
       return lock.synchronized(function);
     } else {
       return function();
+    }
+  }
+
+  void _syncSubtitlesFromActiveCues() {
+    final trackElement = _subtitleTrackElement;
+    if (trackElement == null || trackElement.parentNode != element) {
+      _subtitleTrackElement = null;
+      return;
+    }
+    final activeCues = trackElement.track.activeCues;
+    if (activeCues == null) {
+      return;
+    }
+    final cueList = <String>[];
+    for (var i = 0; i < activeCues.length; i++) {
+      final cue = activeCues[i];
+      // VTTCue has a 'text' property
+      final textValue = (cue as JSObject)['text'];
+      final text =
+          textValue.isA<JSString>() ? (textValue as JSString).toDart : null;
+      if (text != null) {
+        cueList.add(
+          text
+              .replaceAll(RegExp('<[^>]*>'), ' ')
+              .replaceAll(RegExp(r'\s+'), ' ')
+              .trim(),
+        );
+      }
+    }
+
+    final subtitle = ['', ''];
+    if (cueList.length == 1) {
+      subtitle[0] = cueList[0];
+    } else if (cueList.length >= 2) {
+      subtitle[0] = cueList[0];
+      subtitle[1] = cueList.skip(1).join('\n');
+    }
+
+    if (state.subtitle.length != 2 ||
+        state.subtitle[0] != subtitle[0] ||
+        state.subtitle[1] != subtitle[1]) {
+      state = state.copyWith(subtitle: subtitle);
+      if (!subtitleController.isClosed) {
+        subtitleController.add(subtitle);
+      }
     }
   }
 
@@ -1655,6 +1649,9 @@ class WebPlayer extends PlatformPlayer {
 
   /// Current subtitle blob URL to revoke when changing tracks or disposing.
   String? _subtitleBlobUrl;
+
+  /// Current subtitle track element to read active cues from.
+  web.HTMLTrackElement? _subtitleTrackElement;
 
   /// Synchronization & mutual exclusion between methods of this class.
   final Lock lock = Lock();

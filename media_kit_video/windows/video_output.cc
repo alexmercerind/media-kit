@@ -47,10 +47,15 @@ VideoOutput::VideoOutput(int64_t handle,
         surface_manager_->MakeCurrent(true);
         Resize(width_.value_or(1), height_.value_or(1));
         mpv_opengl_init_params gl_init_params{
+#ifdef MEDIA_KIT_VIDEO_NO_ANGLE
+            nullptr,
+            nullptr,
+#else
             [](auto, auto name) {
               return reinterpret_cast<void*>(eglGetProcAddress(name));
             },
             nullptr,
+#endif
         };
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_OPENGL},

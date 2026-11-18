@@ -1176,7 +1176,6 @@ void main() {
 
       addTearDown(player.dispose);
     },
-    skip: kSkipFlakyTests,
     timeout: Timeout(const Duration(minutes: 1)),
   );
   test(
@@ -2340,6 +2339,18 @@ void main() {
       // VOLUNTARY DELAY.
       await Future.delayed(const Duration(seconds: 1));
 
+      // Each false -> true transition is one independent shuffle attempt:
+      // repeated setShuffle(true) calls are idempotent no-ops on every
+      // platform, so toggle to give a different order several chances to
+      // appear (a single shuffle keeps the order with probability 1/24).
+      await player.setShuffle(true);
+      await player.setShuffle(false);
+      await player.setShuffle(true);
+      await player.setShuffle(false);
+      await player.setShuffle(true);
+      await player.setShuffle(false);
+      await player.setShuffle(true);
+      await player.setShuffle(false);
       await player.setShuffle(true);
 
       await Future.delayed(const Duration(seconds: 1));
@@ -2404,19 +2415,23 @@ void main() {
       // VOLUNTARY DELAY.
       await Future.delayed(const Duration(seconds: 1));
 
+      // Each false -> true transition is one independent shuffle attempt:
+      // repeated setShuffle(true) calls are idempotent no-ops on every
+      // platform, so toggle to give a different order several chances to
+      // appear (a single shuffle keeps the order with probability 1/24).
       await player.setShuffle(true);
+      await player.setShuffle(false);
       await player.setShuffle(true);
+      await player.setShuffle(false);
       await player.setShuffle(true);
+      await player.setShuffle(false);
       await player.setShuffle(true);
+      await player.setShuffle(false);
       await player.setShuffle(true);
 
       await Future.delayed(const Duration(seconds: 1));
 
       // VOLUNTARY DELAY.
-      await player.setShuffle(false);
-      await player.setShuffle(false);
-      await player.setShuffle(false);
-      await player.setShuffle(false);
       await player.setShuffle(false);
 
       // VOLUNTARY DELAY.
@@ -2611,11 +2626,15 @@ void main() {
         ),
       );
 
-      await Future.delayed(const Duration(minutes: 1));
+      await player.stream.completed
+          .firstWhere((completed) => completed)
+          .timeout(const Duration(minutes: 5));
+
+      await Future.delayed(const Duration(seconds: 5));
 
       await player.dispose();
     },
-    timeout: Timeout(const Duration(minutes: 1, seconds: 30)),
+    timeout: Timeout(const Duration(minutes: 7)),
   );
   test(
     'player-buffering-pause-play',
@@ -2684,11 +2703,16 @@ void main() {
         ),
       );
 
-      await Future.delayed(const Duration(minutes: 1));
+      await player.stream.completed
+          .firstWhere((completed) => completed)
+          .timeout(const Duration(minutes: 5));
+
+      // VOLUNTARY DELAY: let the EOF buffering events propagate.
+      await Future.delayed(const Duration(seconds: 5));
 
       await player.dispose();
     },
-    timeout: Timeout(const Duration(minutes: 1, seconds: 30)),
+    timeout: Timeout(const Duration(minutes: 7)),
   );
   test(
     'player-buffering-playlist',
@@ -2823,7 +2847,6 @@ void main() {
 
       await player.dispose();
     },
-    skip: kSkipFlakyTests,
     timeout: Timeout(const Duration(minutes: 2)),
   );
   test(
@@ -2888,7 +2911,7 @@ void main() {
       await player.dispose();
     },
     timeout: Timeout(const Duration(minutes: 2)),
-    skip: UniversalPlatform.isWeb,
+    skip: UniversalPlatform.isWeb || kSkipAudioOnlyTests,
   );
   test(
     'player-screenshot-format',
@@ -2919,7 +2942,7 @@ void main() {
       await player.dispose();
     },
     timeout: Timeout(const Duration(minutes: 2)),
-    skip: UniversalPlatform.isWeb,
+    skip: UniversalPlatform.isWeb || kSkipAudioOnlyTests,
   );
   test(
     'player-screenshot',
@@ -3155,7 +3178,7 @@ void main() {
 
       await player.dispose();
     },
-    skip: UniversalPlatform.isWeb,
+    skip: UniversalPlatform.isWeb || kSkipAudioOnlyTests,
     timeout: Timeout(const Duration(minutes: 2)),
   );
   test(
@@ -3274,6 +3297,12 @@ void main() {
         player.stream.track,
         emitsInOrder(
           [
+            // Player.open resets the selected track.
+            Track(
+              video: VideoTrack.auto(),
+              audio: AudioTrack.auto(),
+              subtitle: SubtitleTrack.auto(),
+            ),
             Track(
               video: VideoTrack.auto(),
               audio: AudioTrack.auto(),
@@ -3283,26 +3312,11 @@ void main() {
                 language: 'en',
               ),
             ),
+            // Player.dispose resets the selected track.
             Track(
               video: VideoTrack.auto(),
               audio: AudioTrack.auto(),
               subtitle: SubtitleTrack.auto(),
-            ),
-            // Player.dispose
-            Track(
-              video: VideoTrack.no(),
-              audio: AudioTrack.auto(),
-              subtitle: SubtitleTrack.auto(),
-            ),
-            Track(
-              video: VideoTrack.no(),
-              audio: AudioTrack.no(),
-              subtitle: SubtitleTrack.auto(),
-            ),
-            Track(
-              video: VideoTrack.no(),
-              audio: AudioTrack.no(),
-              subtitle: SubtitleTrack.no(),
             ),
             emitsDone,
           ],
@@ -3320,6 +3334,7 @@ void main() {
               'subtitle',
               isTrue,
             ),
+
             // SAME VALUE!
             // TypeMatcher<List<String>>().having(
             //   (subtitle) => ListEquality().equals(
@@ -3487,9 +3502,12 @@ void main() {
       await Future.delayed(const Duration(minutes: 1));
 
       await player.dispose();
+
+      // VOLUNTARY DELAY: let the stream-close event reach expect matchers.
+      await Future.delayed(const Duration(seconds: 1));
     },
-    skip: kSkipFlakyTests,
     timeout: Timeout(const Duration(minutes: 2)),
+    skip: UniversalPlatform.isWeb || kSkipAudioOnlyTests,
   );
   test(
     'player-set-subtitle-track-external-data',
@@ -3542,6 +3560,12 @@ Simply for <u>everyone</u>
         player.stream.track,
         emitsInOrder(
           [
+            // Player.open resets the selected track.
+            Track(
+              video: VideoTrack.auto(),
+              audio: AudioTrack.auto(),
+              subtitle: SubtitleTrack.auto(),
+            ),
             Track(
               video: VideoTrack.auto(),
               audio: AudioTrack.auto(),
@@ -3551,26 +3575,11 @@ Simply for <u>everyone</u>
                 language: 'en',
               ),
             ),
+            // Player.dispose resets the selected track.
             Track(
               video: VideoTrack.auto(),
               audio: AudioTrack.auto(),
               subtitle: SubtitleTrack.auto(),
-            ),
-            // Player.dispose
-            Track(
-              video: VideoTrack.no(),
-              audio: AudioTrack.auto(),
-              subtitle: SubtitleTrack.auto(),
-            ),
-            Track(
-              video: VideoTrack.no(),
-              audio: AudioTrack.no(),
-              subtitle: SubtitleTrack.auto(),
-            ),
-            Track(
-              video: VideoTrack.no(),
-              audio: AudioTrack.no(),
-              subtitle: SubtitleTrack.no(),
             ),
             emitsDone,
           ],
@@ -3588,6 +3597,7 @@ Simply for <u>everyone</u>
               'subtitle',
               isTrue,
             ),
+
             // SAME VALUE!
             // TypeMatcher<List<String>>().having(
             //   (subtitle) => ListEquality().equals(
@@ -3751,13 +3761,15 @@ Simply for <u>everyone</u>
           language: 'en',
         ),
       );
-
       await Future.delayed(const Duration(minutes: 1));
 
       await player.dispose();
+
+      // VOLUNTARY DELAY: let the stream-close event reach expect matchers.
+      await Future.delayed(const Duration(seconds: 1));
     },
-    skip: kSkipFlakyTests,
     timeout: Timeout(const Duration(minutes: 2)),
+    skip: !UniversalPlatform.isWeb && kSkipAudioOnlyTests,
   );
   test(
     'player-web-player-hls',
@@ -3828,6 +3840,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
               'subtitle',
               isTrue,
             ),
+
             // Player.setSubtitleTrack
             TypeMatcher<List<String>>().having(
               (subtitle) => ListEquality().equals(
@@ -3868,8 +3881,12 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
       await Future.delayed(const Duration(seconds: 15));
 
       await player.dispose();
+
+      // VOLUNTARY DELAY: let the stream-close event reach expect matchers.
+      await Future.delayed(const Duration(seconds: 1));
     },
-    skip: kSkipFlakyTests,
+    timeout: Timeout(const Duration(minutes: 2)),
+    skip: !UniversalPlatform.isWeb && kSkipAudioOnlyTests,
   );
   test(
     'player-subtitle-reset-set-subtitle-track-subtitle-track-no',
@@ -3901,6 +3918,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
               'subtitle',
               isTrue,
             ),
+
             // Player.setSubtitleTrack
             TypeMatcher<List<String>>().having(
               (subtitle) => ListEquality().equals(
@@ -3941,8 +3959,12 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
       await Future.delayed(const Duration(seconds: 15));
 
       await player.dispose();
+
+      // VOLUNTARY DELAY: let the stream-close event reach expect matchers.
+      await Future.delayed(const Duration(seconds: 1));
     },
-    skip: kSkipFlakyTests,
+    timeout: Timeout(const Duration(minutes: 2)),
+    skip: !UniversalPlatform.isWeb && kSkipAudioOnlyTests,
   );
   test(
     'player-native-player-set-property',
@@ -4055,4 +4077,5 @@ List<T> move<T>(List<T> list, int from, int to) {
   return map.values.toList();
 }
 
-const kSkipFlakyTests = true;
+/// Flip back once video-capable builds are under test.
+const kSkipAudioOnlyTests = true;

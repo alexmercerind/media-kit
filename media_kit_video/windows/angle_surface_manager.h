@@ -9,6 +9,40 @@
 #ifndef ANGLE_SURFACE_MANAGER_H_
 #define ANGLE_SURFACE_MANAGER_H_
 
+#ifdef MEDIA_KIT_VIDEO_NO_ANGLE
+
+#include <Windows.h>
+
+#include <cstdint>
+#include <functional>
+#include <stdexcept>
+
+class ANGLESurfaceManager {
+ public:
+  const int32_t width() const { return width_; }
+  const int32_t height() const { return height_; }
+  const HANDLE handle() const { return handle_; }
+
+  ANGLESurfaceManager(int32_t width, int32_t height) {
+    throw std::runtime_error(
+        "media_kit: ANGLESurfaceManager: ANGLE is not available.");
+  }
+
+  ~ANGLESurfaceManager() = default;
+
+  void SetSize(int32_t width, int32_t height) {}
+  void Draw(std::function<void()> callback) {}
+  void Read() {}
+  void MakeCurrent(bool value) {}
+
+ private:
+  int32_t width_ = 1;
+  int32_t height_ = 1;
+  HANDLE handle_ = nullptr;
+};
+
+#else  // MEDIA_KIT_VIDEO_NO_ANGLE
+
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <EGL/eglplatform.h>
@@ -130,5 +164,7 @@ class ANGLESurfaceManager {
   // Number of active instances of ANGLESurfaceManager.
   static int32_t instance_count_;
 };
+
+#endif  // MEDIA_KIT_VIDEO_NO_ANGLE
 
 #endif  // ANGLE_SURFACE_MANAGER_H_
