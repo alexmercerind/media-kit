@@ -184,6 +184,9 @@ class NativePlayer extends PlatformPlayer {
         synchronized: false,
       );
 
+      // A new load starts its own buffering cycle.
+      isBufferingStateChangeAllowed = true;
+
       // Enter paused state.
       await _setPropertyFlag('pause', true);
 
@@ -353,6 +356,8 @@ class NativePlayer extends PlatformPlayer {
           subtitleController.add(['', '']);
         }
       }
+
+      isBufferingStateChangeAllowed = true;
     }
 
     if (synchronized) {
@@ -378,6 +383,7 @@ class NativePlayer extends PlatformPlayer {
       }
 
       isPlayingStateChangeAllowed = true;
+      isBufferingStateChangeAllowed = true;
 
       // This condition is specifically for the case when the internal playlist is ended (with [PlaylistLoopMode.none]), and we want to play the playlist again if play/pause is pressed.
       if (state.completed) {
@@ -445,7 +451,7 @@ class NativePlayer extends PlatformPlayer {
       }
 
       isPlayingStateChangeAllowed = state.playing;
-      isBufferingStateChangeAllowed = false;
+      isBufferingStateChangeAllowed = state.playing;
 
       // This condition is specifically for the case when the internal playlist is ended (with [PlaylistLoopMode.none]), and we want to play the playlist again if play/pause is pressed.
       if (state.completed) {
@@ -1601,6 +1607,7 @@ class NativePlayer extends PlatformPlayer {
       if (prop.ref.name.cast<Utf8>().toDartString() == 'core-idle' &&
           prop.ref.format == generated.mpv_format.MPV_FORMAT_FLAG) {
         // Check for [isBufferingStateChangeAllowed] because `pause` causes `core-idle` to be fired.
+        // Nothing is emitted while paused.
         final buffering = prop.ref.data.cast<Int8>().value == 1;
         if (buffering) {
           if (isBufferingStateChangeAllowed) {
@@ -1610,19 +1617,22 @@ class NativePlayer extends PlatformPlayer {
             }
           }
         } else {
-          state = state.copyWith(buffering: false);
-          if (!bufferingController.isClosed) {
-            bufferingController.add(false);
+          if (isBufferingStateChangeAllowed) {
+            state = state.copyWith(buffering: false);
+            if (!bufferingController.isClosed) {
+              bufferingController.add(false);
+            }
           }
         }
-        isBufferingStateChangeAllowed = true;
       }
       if (prop.ref.name.cast<Utf8>().toDartString() == 'paused-for-cache' &&
           prop.ref.format == generated.mpv_format.MPV_FORMAT_FLAG) {
-        final buffering = prop.ref.data.cast<Int8>().value == 1;
-        state = state.copyWith(buffering: buffering);
-        if (!bufferingController.isClosed) {
-          bufferingController.add(buffering);
+        if (isBufferingStateChangeAllowed) {
+          final buffering = prop.ref.data.cast<Int8>().value == 1;
+          state = state.copyWith(buffering: buffering);
+          if (!bufferingController.isClosed) {
+            bufferingController.add(buffering);
+          }
         }
       }
       if (prop.ref.name.cast<Utf8>().toDartString() == 'demuxer-cache-time' &&
@@ -2046,6 +2056,11 @@ class NativePlayer extends PlatformPlayer {
             tracks: Tracks(),
             track: Track(),
           );
+          // The EOF pulse is emitted directly: the matching core-idle event
+          // may have arrived while paused & must not be lost.
+          if (!bufferingController.isClosed) {
+            bufferingController.add(true);
+          }
           if (!bufferingController.isClosed) {
             bufferingController.add(false);
           }
@@ -2757,9 +2772,7 @@ class NativePlayer extends PlatformPlayer {
   /// While [isPlayingStateChangeAllowed] is `false`, any change to [state.playing] & [stream.playing] is ignored.
   bool isPlayingStateChangeAllowed = false;
 
-  /// A flag to prevent changes to [state.buffering] due to `pause` causing `core-idle` to be `true`.
-  ///
-  /// This is used to prevent [state.buffering] being set to `true` when [pause] or [playOrPause] is called.
+  /// Whether [state.buffering] may change. Cleared while paused or stopping, restored on [play], [open] & [stop].
   bool isBufferingStateChangeAllowed = true;
 
   /// A flag to prevent changes to the [state.playlist] due to `playlist-shuffle` or `playlist-unshuffle` in [setShuffle].

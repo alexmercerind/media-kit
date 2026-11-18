@@ -26,9 +26,22 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
     "${ANGLE_SRC}/include"
   )
 
+  if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../media_kit_libs_windows_video")
+    set(ANGLE_SOURCES "angle_surface_manager.cc")
+    set(ANGLE_LIBS
+      "${ANGLE_SRC}/lib/libEGL.dll.lib"
+      "${ANGLE_SRC}/lib/libGLESv2.dll.lib")
+    set(ANGLE_DEFINITIONS "")
+  else()
+    message(STATUS "media_kit_video: ANGLE not found (audio-only libs), building without hardware surfaces.")
+    set(ANGLE_SOURCES "")
+    set(ANGLE_LIBS "")
+    set(ANGLE_DEFINITIONS "MEDIA_KIT_VIDEO_NO_ANGLE")
+  endif()
+
   add_library(
     ${PLUGIN_NAME} SHARED
-    "angle_surface_manager.cc"
+    ${ANGLE_SOURCES}
     "media_kit_video_plugin_c_api.cc"
     "media_kit_video_plugin.cc"
     "video_output_manager.cc"
@@ -46,6 +59,7 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
   target_compile_definitions(
     ${PLUGIN_NAME} PRIVATE
     FLUTTER_PLUGIN_IMPL
+    ${ANGLE_DEFINITIONS}
   )
 
   target_include_directories(
@@ -60,8 +74,7 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
 
     # Link to libmpv & ANGLE.
     "${LIBMPV_SRC}/libmpv.dll.a"
-    "${ANGLE_SRC}/lib/libEGL.dll.lib"
-    "${ANGLE_SRC}/lib/libGLESv2.dll.lib"
+    ${ANGLE_LIBS}
   )
 else()
   message(NOTICE "media_kit: WARNING: package:media_kit_libs_*** not found.")

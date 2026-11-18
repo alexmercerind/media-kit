@@ -3,6 +3,8 @@
 /// Copyright © 2021 & onwards, Hitesh Kumar Saini <saini123hitesh@gmail.com>.
 /// All rights reserved.
 /// Use of this source code is governed by MIT license that can be found in the LICENSE file.
+import 'dart:typed_data';
+
 import 'package:test/test.dart';
 import 'package:collection/collection.dart';
 import 'package:universal_platform/universal_platform.dart';
@@ -230,6 +232,19 @@ void main() {
           await Future.delayed(Duration(seconds: 5));
         }
         if (i == 1) {
+          // The [Finalizer] runs on garbage collection, which has no timing
+          // guarantees: allocate pressure until the previous instance is
+          // collected & evicted from [Media.cache] instead of assuming a
+          // fixed delay is enough. Notably, no new [Media] may be created
+          // while waiting: that would bump the reference count & repopulate
+          // the cache entry, making eviction impossible (see [Media._]).
+          final uri = Media.normalizeURI(sources.platform.first);
+          for (int j = 0; j < 60 && Media.cache.containsKey(uri); j++) {
+            // ignore: unused_local_variable
+            final pressure = Uint8List(32 * 1024 * 1024);
+            await Future.delayed(Duration(seconds: 1));
+          }
+
           final playable = Media(sources.platform.first);
 
           print(playable.extras);
@@ -240,6 +255,8 @@ void main() {
         }
       }
     },
-    skip: true,
+    // The polling loop above needs up to ~70 seconds on loaded CI runners:
+    // keep the default 30 second timeout from killing the test mid-loop.
+    timeout: Timeout(const Duration(minutes: 3)),
   );
 }

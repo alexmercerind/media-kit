@@ -14,15 +14,15 @@ set(PROJECT_NAME "media_kit_libs_windows_audio")
 project(${PROJECT_NAME} LANGUAGES CXX)
 
 # ------------------------------------------------------------------------------
-function(download_and_verify url md5 locationForArchive)
+function(download_and_verify url sha256 locationForArchive)
   # Check if the archive exists.
   if(EXISTS "${locationForArchive}")
-    file(MD5 "${locationForArchive}" ARCHIVE_MD5)
+    file(SHA256 "${locationForArchive}" ARCHIVE_SHA256)
 
-    # If MD5 doesn't match, delete the archive to download again.
-    if(NOT md5 STREQUAL ARCHIVE_MD5)
+    # If SHA-256 doesn't match, delete the archive to download again.
+    if(NOT sha256 STREQUAL ARCHIVE_SHA256)
       file(REMOVE "${locationForArchive}")
-      message(STATUS "MD5 mismatch. File deleted.")
+      message(STATUS "SHA-256 mismatch. File deleted.")
     endif()
   endif()
 
@@ -32,10 +32,10 @@ function(download_and_verify url md5 locationForArchive)
     file(DOWNLOAD "${url}" "${locationForArchive}")
     message(STATUS "Downloaded archive to ${locationForArchive}.")
 
-    # Verify MD5 of the newly downloaded file.
-    file(MD5 "${locationForArchive}" ARCHIVE_MD5)
+    # Verify SHA-256 of the newly downloaded file.
+    file(SHA256 "${locationForArchive}" ARCHIVE_SHA256)
 
-    if(md5 STREQUAL ARCHIVE_MD5)
+    if(sha256 STREQUAL ARCHIVE_SHA256)
       message(STATUS "${locationForArchive} Verification successful.")
     else()
       message(FATAL_ERROR "${locationForArchive} Integrity check failed, please try to re-build project again.")
@@ -61,35 +61,35 @@ function(check_directory_exists_and_not_empty dir result_var)
   endif()
 endfunction()
 
-# Thanks to Mitchel Stewart (https://github.com/Quackdoc) for providing patches to generate minimal libmpv & FFmpeg audio specific builds.
+set(LIBMPV_VERSION "v0.0.5")
 
 # Detect architecture and set appropriate libmpv archive
 if(${FLUTTER_TARGET_PLATFORM} STREQUAL "windows-x64")
   set(LIBMPV_ARCH "x86_64")
-  set(LIBMPV "mpv-dev-x86_64-20251213-git-140ec21.7z")
-  set(LIBMPV_MD5 "bf77216724f0f290dd14d2b1bc9826df")
+  set(LIBMPV "libmpv_windows_x64_audio.zip")
+  set(LIBMPV_SHA256 "7e9094757807052ebe6662fe6c94b03c14de7c6d0c6762296437cbfe1a0758db")
 else()
   set(LIBMPV_ARCH "aarch64")
-  set(LIBMPV "mpv-dev-aarch64-20251213-git-140ec21.7z")
-  set(LIBMPV_MD5 "fc3c09cd5bed08db58f888460da9059f")
+  set(LIBMPV "libmpv_windows_arm64_audio.zip")
+  set(LIBMPV_SHA256 "fefb681cfb20699952697fb52602e01fe00089a243ca33fc8439368a8c2294ca")
 endif()
 
 # Download URL for the libmpv archive from the latest release
-set(LIBMPV_URL "https://github.com/media-kit/libmpv-win32-audio-cmake/releases/download/20251213/${LIBMPV}")
+set(LIBMPV_URL "https://github.com/alexmercerind/libmpv-build/releases/download/${LIBMPV_VERSION}/${LIBMPV}")
 
 # Download location of the libmpv archive.
-set(LIBMPV_ARCHIVE "${CMAKE_BINARY_DIR}/${LIBMPV}")
+set(LIBMPV_ARCHIVE "${CMAKE_BINARY_DIR}/${LIBMPV_VERSION}_${LIBMPV}")
 set(LIBMPV_SRC "${CMAKE_BINARY_DIR}/libmpv")
 
 download_and_verify(
   ${LIBMPV_URL}
-  ${LIBMPV_MD5}
+  ${LIBMPV_SHA256}
   ${LIBMPV_ARCHIVE}
 )
 
 check_directory_exists_and_not_empty(${LIBMPV_SRC} LIBMPV_SRC_VALID)
 
-# Find 7zip for extraction (preferred for .7z files)
+# Find 7zip for extraction (preferred for .zip files)
 find_program(SEVENZ_EXECUTABLE NAMES 7z 7za)
 
 # Extract the libmpv archive.
@@ -114,7 +114,7 @@ if(NOT LIBMPV_SRC_VALID)
     add_custom_command(
       TARGET "${PROJECT_NAME}_LIBMPV_EXTRACT"
       POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E tar xzf "\"${LIBMPV_ARCHIVE}\""
+      COMMAND "${CMAKE_COMMAND}" -E tar xf "\"${LIBMPV_ARCHIVE}\""
       COMMAND xcopy "\"${LIBMPV_SRC}/include/mpv\"" "\"${LIBMPV_SRC}/mpv\"" /E /H /C /I
       COMMAND rmdir "\"${LIBMPV_SRC}/include\"" /S /Q
       COMMAND ren "\"${LIBMPV_SRC}/mpv\"" "\"include\""
