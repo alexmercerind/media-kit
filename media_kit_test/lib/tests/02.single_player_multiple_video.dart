@@ -70,11 +70,11 @@ class _SinglePlayerMultipleVideoScreenState
             heroTag: 'file',
             tooltip: 'Open [File]',
             onPressed: () async {
-              final result = await FilePicker.pickFiles(
+              final files = await FilePicker.pickFiles(
                 type: FileType.any,
               );
-              if (result?.files.isNotEmpty ?? false) {
-                await player.open(Media(result!.files.first.path!));
+              if (files.isNotEmpty) {
+                await player.open(Media(files.first.path!));
               }
             },
             child: const Icon(Icons.file_open),

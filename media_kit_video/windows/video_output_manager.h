@@ -11,6 +11,9 @@
 
 #include <flutter/plugin_registrar_windows.h>
 
+#include <functional>
+#include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include "thread_pool.h"
@@ -34,22 +37,21 @@ class VideoOutputManager {
       std::function<void(int64_t, int64_t, int64_t)> texture_update_callback);
 
   // Sets the required video output size.
-  // This forces |VideoOutput| to resize the internal OpenGL surface / D3D
-  // texture.
+  // This forces |VideoOutput| to resize the internal Direct3D 11 texture.
   void SetSize(int64_t handle,
                std::optional<int64_t> width,
                std::optional<int64_t> height);
 
   // Destroys the |VideoOutput| with given handle.
-  void Dispose(int64_t handle);
+  // Completion callback is invoked after render context and texture destruction.
+  void Dispose(int64_t handle, std::function<void()> on_disposed);
 
   ~VideoOutputManager();
 
  private:
-  std::mutex mutex_ = std::mutex();
-  // All the operations involving ANGLE or EGL or libmpv must be performed on
-  // same single thread to prevent any race conditions or invalid ANGLE usage.
-  // Not doing so results in access violations & crashes.
+  // All the operations involving Direct3D 11 or libmpv must be performed on
+  // the same single thread to prevent any race conditions or invalid D3D11
+  // context usage. Not doing so results in access violations & crashes.
   //
   // Technically, the correct place to do all the video rendering (& thus
   // resize) etc. is on Flutter's render thread itself (exposed as callback in
@@ -58,20 +60,20 @@ class VideoOutputManager {
   // worker thread which queues all the rendering related jobs & performs them
   // orderly. |ThreadPool| is exactly that.
   //
-  // All of the following tasks involve ANGLE or OpenGL context etc. etc.
+  // All of the following tasks involve Direct3D 11 device/context or libmpv.
   // Following operations are performed through the |ThreadPool|:
   //
   // * Rendering of video frame i.e. |mpv_render_context_render| (also involves
-  //   |eglMakeCurrent| etc.) after being notified by
+  //   D3D11 rendering & copy) after being notified by
   //   |mpv_render_context_set_update_callback|.
   // * Creation / Disposal of new |VideoOutput|.
   //     * For creation, |mpv_render_context_create| & instantiation of a new
-  //       |ANGLESurfaceManager| is done through |ThreadPool| (in |VideoOutput|
+  //       |D3D11Renderer| is done through |ThreadPool| (in |VideoOutput|
   //       constructor).
   //     * For disposal, |ThreadPool| ensures that all the pending |Render| or
-  //       |Resize| tasks are completed before freeing the |ANGLESurfaceManager|
+  //       |Resize| tasks are completed before freeing the |D3D11Renderer|
   //       & |mpv_render_context| etc.
-  // * Resizing of |ANGLESurfaceManager| & creation of newly sized Flutter
+  // * Resizing of |D3D11Renderer| & creation of newly sized Flutter
   //   textures (|flutter::GpuSurfaceTexture| & |flutter::PixelBufferTexture|).
   //
   // Creating a |ThreadPool| with maximum number of worker threads as 1, ensures
@@ -80,6 +82,9 @@ class VideoOutputManager {
   std::unique_ptr<ThreadPool> thread_pool_ = std::make_unique<ThreadPool>(1);
   flutter::PluginRegistrarWindows* registrar_ = nullptr;
   std::unordered_map<int64_t, std::unique_ptr<VideoOutput>> video_outputs_ = {};
+  // Declared last so pending Create/SetSize/Dispose tasks drain and join before
+  // |video_outputs_| and |thread_pool_| are destroyed.
+  std::unique_ptr<ThreadPool> command_pool_ = std::make_unique<ThreadPool>(1);
 };
 
 #endif  // VIDEO_OUTPUT_MANAGER_H_

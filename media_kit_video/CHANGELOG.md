@@ -1,3 +1,12 @@
+## 2.1.0
+
+- feat(windows): render through native Direct3D 11 render API (replace ANGLE)
+- feat(windows): Direct3D 11 texture sharing with Flutter engine (avoiding CPU readback and ANGLE translation)
+- fix(windows): synchronize texture registration with resize to avoid stale & duplicated textures
+- fix(windows): prevent method channel deadlock in VideoOutputManager.Dispose
+- fix(windows): always complete VideoOutputManager.Dispose replies even when the window is gone
+- note(windows): presentation still stalls while the window is resized rapidly, same as the ANGLE implementation
+
 ## 2.0.1
 
 - fix: flutter 3.38.x crash

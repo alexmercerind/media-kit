@@ -2041,8 +2041,8 @@ classDiagram
   MediaKitVideoPlugin "1" *-- "1" VideoOutputManager: Create VideoOutput(s) with VideoOutputManager for handle passed through platform channel
   VideoOutputManager "1" *-- "*" VideoOutput: Takes PluginRegistrarWindows as reference
   VideoOutputManager "1" *-- "1" ThreadPool
-  VideoOutput "*" o-- "1" ThreadPool: Post creation, resize & render etc. tasks involving EGL to ensure synchronous EGL/ANGLE usage across multiple VideoOutput(s)
-  VideoOutput "1" *-- "1" ANGLESurfaceManager: Only for H/W accelerated rendering
+  VideoOutput "*" o-- "1" ThreadPool: Post creation, resize & render etc. tasks to ensure synchronous Direct3D 11 & mpv_render_* usage across multiple VideoOutput(s)
+  VideoOutput "1" *-- "1" D3D11Renderer: Only for H/W accelerated rendering
 
   class MediaKitVideoPlugin {
     -flutter::PluginRegistrarWindows registrar_
@@ -2066,67 +2066,53 @@ classDiagram
   }
 
   class VideoOutput {
-    +«get» texture_id: int64_t
-    +«get» width: int64_t
-    +«get» height: int64_t
     -mpv_handle* handle_
     -mpv_render_context* render_context_
+    -VideoOutputConfiguration configuration_
     -std::optional<int64_t> width_
     -std::optional<int64_t> height_
-    -bool enable_hardware_acceleration_
     -int64_t texture_id_
     -flutter::PluginRegistrarWindows registrar_
     -ThreadPool* thread_pool_ref_
-    -bool destroyed_
-    -std::mutex textures_mutex_
-    -std::unordered_map<int64_t, std::unique_ptr<flutter::TextureVariant>> texture_variants_
-    -std::unique_ptr<ANGLESurfaceManager> surface_manager_ HW
-    -std::unordered_map<int64_t, std::unique_ptr<FlutterDesktopGpuSurfaceDescriptor>> textures_ HW
+    -std::atomic<bool> destroyed_
+    -std::shared_ptr<TextureRegistryState> texture_state_
+    -std::unique_ptr<D3D11Renderer> d3d11_renderer_ HW
     -std::unique_ptr<uint8_t[]> pixel_buffer_ SW
-    -std::unordered_map<int64_t, std::unique_ptr<FlutterDesktopPixelBuffer>> pixel_buffer_textures_ SW
     -std::function texture_update_callback_
 
     +SetTextureUpdateCallback(callback: std::function<void(int64_t, int64_t, int64_t)>)
     +SetSize(width: std::optional<int64_t>, height: std::optional<int64_t>)
     -NotifyRender()
     -Render()
+    -SkipFrame()
     -CheckAndResize()
     -Resize(required_width: int64_t, required_height: int64_t)
+    -GetVideoDimensions(out_width: int64_t&, out_height: int64_t&)
     -GetVideoWidth(): int64_t
     -GetVideoHeight(): int64_t
   }
 
-  class ANGLESurfaceManager {
+  class D3D11Renderer {
+    +«get» device: ID3D11Device*
+    +«get» render_target: ComPtr<ID3D11Texture2D>
+    +«get» shared_texture: ComPtr<ID3D11Texture2D>
+    +«get» shared_handle: HANDLE
     +«get» width: int32_t
     +«get» height: int32_t
-    +«get» handle: HANDLE
 
-    +HandleResize(width: int32_t, height: int32_t)
-    +Draw(draw_callback: std::function<void()>)
-    +Read()
-    +MakeCurrent(value: bool)
-    -CreateEGLDisplay()
-    -SwapBuffers()
-    -Create()
-    -CleanUp(release_context: bool)
-    -CreateD3DTexture()
-    -CreateEGLDisplay()
-    -CreateAndBindEGLSurface()
+    +SetSize(width: int32_t, height: int32_t): bool
+    +Commit()
+    -CreateD3D11Device(flutter_adapter: IDXGIAdapter*): bool
+    -CreateSurfaces(): bool
+    -ReleaseSurfaces()
 
-    -IDXGIAdapter* adapter_
     -int32_t width_
     -int32_t height_
-    -HANDLE internal_handle_
-    -HANDLE handle_
-    -HANDLE mutex_
-    -ID3D11Device* d3d_11_device_
-    -ID3D11DeviceContext* d3d_11_device_context_
-    -Microsoft::WRL::ComPtr<ID3D11Texture2D> internal_d3d_11_texture_2D_
-    -Microsoft::WRL::ComPtr<IDXGISwapChain> d3d_11_texture_2D_
-    -EGLSurface surface_
-    -EGLDisplay display_
-    -EGLContext context_
-    -EGLConfig config_
+    -Microsoft::WRL::ComPtr<ID3D11Device> d3d_11_device_
+    -Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d_11_device_context_
+    -Microsoft::WRL::ComPtr<ID3D11Texture2D> render_target_texture_
+    -Microsoft::WRL::ComPtr<ID3D11Texture2D> shared_texture_
+    -HANDLE shared_handle_
   }
 ```
 
@@ -2273,13 +2259,13 @@ Possible improvements :
 
 #### Windows
 
-- [libmpv](https://github.com/mpv-player/mpv/tree/master/libmpv) gives access to C API for rendering hardware-accelerated video output using OpenGL.
+- [libmpv](https://github.com/mpv-player/mpv/tree/master/libmpv) gives access to C API for rendering hardware-accelerated video output using Direct3D 11.
   - See:
     - [render.h](https://github.com/mpv-player/mpv/blob/master/libmpv/render.h)
-    - [render_gl.h](https://github.com/mpv-player/mpv/blob/master/libmpv/render_gl.h)
+    - [render_d3d11.h](https://github.com/mpv-player/mpv/blob/master/libmpv/render_d3d11.h)
 - Flutter recently added ability for Windows to [render Direct3D `ID3D11Texture2D` textures](https://github.com/flutter/engine/pull/26840).
 
-The two APIs above are hardware accelerated i.e. GPU backed buffers are used. **This is performant approach, easily capable for rendering 4K 60 FPS videos**, rest depends on the hardware. Since [libmpv](https://github.com/mpv-player/mpv/tree/master/libmpv) API is OpenGL based & the Texture API in Flutter is Direct3D based, [ANGLE (Almost Native Graphics Layer Engine)](https://github.com/google/angle) is used for interop, which translates the OpenGL ES 2.0 calls into Direct3D.
+The two APIs above are hardware accelerated i.e. GPU backed buffers are used. **This is performant approach, easily capable for rendering 4K 60 FPS videos**, rest depends on the hardware. Since [libmpv](https://github.com/mpv-player/mpv/tree/master/libmpv) API & the Texture API in Flutter are both Direct3D based, no OpenGL or [ANGLE (Almost Native Graphics Layer Engine)](https://github.com/google/angle) translation layer is used: mpv renders into a `ID3D11Texture2D` created on a Direct3D 11 device & its content is copied into a second `ID3D11Texture2D` created with `D3D11_RESOURCE_MISC_SHARED`, whose DXGI shared handle is then registered with Flutter as `kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle`.
 
 This hardware-accelerated video output requires DirectX 11 or higher. Most Windows systems with either integrated or discrete GPUs should support this already. On systems where Direct3D fails to load due to missing graphics drivers or unsupported feature-level or DirectX version etc. a fallback pixel-buffer based software renderer is used. This means that video is rendered by CPU & every frame is copied back to the RAM. This will cause some redundant load on the CPU, result in decreased battery life & may not play higher resolution videos properly. However, it works well.
 

@@ -12,8 +12,9 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <Windows.h>
 #include <functional>
-#include <queue>
+#include <memory>
 #include <mutex>
+#include <queue>
 
 #include "video_output_manager.h"
 
@@ -33,11 +34,19 @@ class MediaKitVideoPlugin : public flutter::Plugin {
  private:
   static constexpr UINT kMainThreadTaskMessage = WM_USER + 1001;
 
+  struct PluginState {
+    std::mutex mutex;
+    bool alive = true;
+    HWND flutter_window = nullptr;
+    std::queue<std::function<void()>> main_thread_tasks;
+  };
+
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
-  void RunOnMainThread(std::function<void()> task);
+  static bool RunOnMainThread(const std::shared_ptr<PluginState>& state,
+                              std::function<void()> task);
   static LRESULT CALLBACK WindowProcDelegate(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
   void ProcessMainThreadTasks();
   
@@ -45,10 +54,8 @@ class MediaKitVideoPlugin : public flutter::Plugin {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_ =
       nullptr;
   std::unique_ptr<VideoOutputManager> video_output_manager_ = nullptr;
-  HWND flutter_window_ = nullptr;
   WNDPROC original_window_proc_ = nullptr;
-  std::queue<std::function<void()>> main_thread_tasks_;
-  std::mutex main_thread_tasks_mutex_;
+  std::shared_ptr<PluginState> state_ = std::make_shared<PluginState>();
   static MediaKitVideoPlugin* instance_;
 };
 

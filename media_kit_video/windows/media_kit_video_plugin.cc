@@ -25,11 +25,15 @@ MediaKitVideoPlugin::MediaKitVideoPlugin(
     : registrar_(registrar),
       video_output_manager_(std::make_unique<VideoOutputManager>(registrar)) {
   instance_ = this;
-  flutter_window_ =
-      ::GetAncestor(registrar->GetView()->GetNativeWindow(), GA_ROOT);
-  original_window_proc_ = reinterpret_cast<WNDPROC>(
-      ::SetWindowLongPtr(flutter_window_, GWLP_WNDPROC,
-                         reinterpret_cast<LONG_PTR>(WindowProcDelegate)));
+  if (auto* view = registrar->GetView()) {
+    state_->flutter_window =
+        ::GetAncestor(view->GetNativeWindow(), GA_ROOT);
+    if (state_->flutter_window) {
+      original_window_proc_ = reinterpret_cast<WNDPROC>(
+          ::SetWindowLongPtr(state_->flutter_window, GWLP_WNDPROC,
+                             reinterpret_cast<LONG_PTR>(WindowProcDelegate)));
+    }
+  }
 
   channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       registrar->messenger(), "com.alexmercerind/media_kit_video",
@@ -40,8 +44,17 @@ MediaKitVideoPlugin::MediaKitVideoPlugin(
 }
 
 MediaKitVideoPlugin::~MediaKitVideoPlugin() {
-  if (flutter_window_ && original_window_proc_) {
-    ::SetWindowLongPtr(flutter_window_, GWLP_WNDPROC,
+  HWND window = nullptr;
+  std::queue<std::function<void()>> pending_tasks;
+  {
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->alive = false;
+    window = state_->flutter_window;
+    state_->flutter_window = nullptr;
+    state_->main_thread_tasks.swap(pending_tasks);
+  }
+  if (window && original_window_proc_) {
+    ::SetWindowLongPtr(window, GWLP_WNDPROC,
                        reinterpret_cast<LONG_PTR>(original_window_proc_));
   }
   if (instance_ == this) {
@@ -49,17 +62,24 @@ MediaKitVideoPlugin::~MediaKitVideoPlugin() {
   }
 }
 
-void MediaKitVideoPlugin::RunOnMainThread(std::function<void()> task) {
-  if (!flutter_window_) {
-    return;
+bool MediaKitVideoPlugin::RunOnMainThread(
+    const std::shared_ptr<PluginState>& state,
+    std::function<void()> task) {
+  if (!state) {
+    return false;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(main_thread_tasks_mutex_);
-    main_thread_tasks_.push(std::move(task));
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (!state->alive || !state->flutter_window ||
+      !::IsWindow(state->flutter_window)) {
+    return false;
   }
 
-  ::PostMessage(flutter_window_, kMainThreadTaskMessage, 0, 0);
+  if (!::PostMessage(state->flutter_window, kMainThreadTaskMessage, 0, 0)) {
+    return false;
+  }
+  state->main_thread_tasks.push(std::move(task));
+  return true;
 }
 
 LRESULT CALLBACK MediaKitVideoPlugin::WindowProcDelegate(HWND hwnd,
@@ -83,8 +103,8 @@ void MediaKitVideoPlugin::ProcessMainThreadTasks() {
   std::queue<std::function<void()>> tasks_to_execute;
 
   {
-    std::lock_guard<std::mutex> lock(main_thread_tasks_mutex_);
-    tasks_to_execute.swap(main_thread_tasks_);
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    tasks_to_execute.swap(state_->main_thread_tasks);
   }
 
   while (!tasks_to_execute.empty()) {
@@ -130,8 +150,12 @@ void MediaKitVideoPlugin::HandleMethodCall(
 
     video_output_manager_->Create(
         handle_value, configuration_value,
-        [this, handle = handle_value](auto id, auto width, auto height) {
-          RunOnMainThread([=]() {
+        [this, state = state_, handle = handle_value](auto id, auto width,
+                                                      auto height) {
+          RunOnMainThread(state, [this, state, handle, id, width, height]() {
+            if (!state->alive || !channel_) {
+              return;
+            }
             channel_->InvokeMethod(
                 "VideoOutput.Resize",
                 std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
@@ -175,8 +199,25 @@ void MediaKitVideoPlugin::HandleMethodCall(
     auto handle =
         std::get<std::string>(arguments[flutter::EncodableValue("handle")]);
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
-    video_output_manager_->Dispose(handle_value);
-    result->Success(flutter::EncodableValue(std::monostate{}));
+    auto completion =
+        std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+            std::move(result));
+    video_output_manager_->Dispose(
+        handle_value, [state = state_, completion]() {
+          bool dispatched = RunOnMainThread(state, [state, completion]() {
+            if (!state->alive) {
+              return;
+            }
+            completion->Success(flutter::EncodableValue(std::monostate{}));
+          });
+          if (!dispatched) {
+            // Nothing got queued (no HWND or window already destroyed): reply here so Dart does not wait forever.
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (state->alive) {
+              completion->Success(flutter::EncodableValue(std::monostate{}));
+            }
+          }
+        });
   } else if (method_call.method_name().compare("VideoOutputManager.SetSize") ==
              0) {
     auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());

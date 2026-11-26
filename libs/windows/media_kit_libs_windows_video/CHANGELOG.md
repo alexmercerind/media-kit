@@ -1,3 +1,8 @@
+## 1.1.0
+
+- feat: update libmpv with native Direct3D 11 rendering support
+- feat: remove ANGLE dependency and bundled DLLs
+
 ## 1.0.12
 
 - feat: support ARM64
